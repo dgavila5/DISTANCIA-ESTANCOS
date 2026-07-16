@@ -149,7 +149,7 @@ function initMap() {
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     subdomains: 'abcd',
     maxZoom: 20
@@ -176,7 +176,7 @@ function initInfluenceLayer() {
       const ctx = tile.getContext('2d');
       if (!clientEstanco || !map) return tile;
       
-      ctx.fillStyle = 'rgba(34, 197, 94, 0.32)'; // emerald-500 @ 32%
+      ctx.fillStyle = 'rgba(34, 197, 94, 0.18)'; // emerald-500 @ 18%
       
       let resolution = 2;
       if (coords.z < 9) return tile;
