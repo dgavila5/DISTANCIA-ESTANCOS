@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zonas de Influencia de Estancos - España</title>
+  <meta name="description" content="Visualizador geográfico para expendedurías de tabaco en España que muestra la zona exacta de influencia legal según la regla de los 3 estancos más cercanos.">
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { dark: '#09090b', panel: '#121216', border: '#27272a' } }
+        }
+      }
+    }
+  </script>
+  
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dexie@4.0.8/dist/dexie.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="h-screen w-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row overflow-hidden">
+
+  <header class="md:hidden bg-zinc-900 border-b border-zinc-800 p-4 flex items-center justify-between z-30 shadow-md">
+    <div class="flex items-center space-x-2">
+      <div class="p-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">
+        <i data-lucide="map-pin" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-tight text-white leading-none">Estancos 3-Cercanos</h1>
+        <span class="text-[10px] text-zinc-400 font-medium">Zona de Influencia Legal</span>
+      </div>
+    </div>
+    <button id="toggle-sidebar-mobile" class="p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700">
+      <i data-lucide="menu" class="w-5 h-5"></i>
+    </button>
+  </header>
+
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-full max-w-sm md:max-w-md bg-zinc-950 md:bg-zinc-900/60 md:backdrop-blur-xl border-r border-zinc-800 md:relative md:flex md:flex-col md:translate-x-0 transition-transform duration-300 transform -translate-x-full shadow-2xl flex flex-col h-full">
+    
+    <div class="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900 md:bg-transparent">
+      <div class="flex items-center space-x-3">
+        <div class="p-2 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 rounded-xl text-emerald-400 shadow-inner">
+          <i data-lucide="map-pin" class="w-6 h-6 animate-pulse"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white leading-tight">Zona de Influencia</h1>
+          <p class="text-xs text-emerald-400 font-medium flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            Ley de 3 Estancos más Cercanos
+          </p>
+        </div>
+      </div>
+      <button id="close-sidebar-mobile" class="md:hidden p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-5 space-y-6">
+      
+      <div class="glass-card rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <i data-lucide="pointer" class="w-4 h-4"></i> Captura en Mapa
+          </h2>
+          <span class="text-[10px] bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400 border border-zinc-700">Click Activo</span>
+        </div>
+        <p class="text-xs text-zinc-400">Selecciona el modo y haz clic en el mapa para capturar las coordenadas geográficas exactas automáticamente.</p>
+        
+        <div class="grid grid-cols-3 gap-1 bg-zinc-950/80 p-1 rounded-xl border border-zinc-800">
+          <button id="btn-mode-client" class="flex flex-col items-center justify-center py-2 px-0.5 rounded-lg text-[10px] font-semibold transition-all duration-300 bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 shadow-sm shadow-emerald-500/5">
+            <i data-lucide="star" class="w-4 h-4 mb-1 fill-emerald-500/20"></i> Tuyo
+          </button>
+          <button id="btn-mode-competitor" class="flex flex-col items-center justify-center py-2 px-0.5 rounded-lg text-[10px] font-semibold transition-all duration-300 text-zinc-400 border border-transparent hover:text-zinc-200">
+            <i data-lucide="shield-alert" class="w-4 h-4 mb-1"></i> Rival
+          </button>
+          <button id="btn-mode-query" class="flex flex-col items-center justify-center py-2 px-0.5 rounded-lg text-[10px] font-semibold transition-all duration-300 text-zinc-400 border border-transparent hover:text-zinc-200">
+            <i data-lucide="compass" class="w-4 h-4 mb-1"></i> Consulta
+          </button>
+        </div>
+      </div>
+
+      <div class="glass-card rounded-2xl p-4 space-y-3">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+          <i data-lucide="store" class="w-4 h-4 text-emerald-400"></i> Mi Estanco (Principal)
+        </h2>
+        
+        <div id="client-saved-state" class="hidden space-y-3">
+          <div class="bg-emerald-950/20 border border-emerald-500/20 p-3.5 rounded-xl flex items-start justify-between">
+            <div class="space-y-1">
+              <h3 id="client-saved-name" class="font-bold text-white text-sm">Estanco Central</h3>
+              <p class="text-xs text-zinc-400 flex items-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5 text-emerald-400"></i>
+                <span id="client-saved-coords">40.9701, -5.6635</span>
+              </p>
+            </div>
+            <div class="flex space-x-1">
+              <button id="btn-edit-client" class="p-1.5 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg transition-colors border border-zinc-700/50" title="Editar coordenadas">
+                <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+              </button>
+              <button id="btn-delete-client" class="p-1.5 bg-zinc-800/80 hover:bg-red-500/20 text-zinc-300 hover:text-red-400 rounded-lg transition-colors border border-zinc-700/50" title="Eliminar estanco">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <form id="client-form" onsubmit="event.preventDefault()" class="space-y-3">
+          <div>
+            <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Nombre Comercial</label>
+            <input type="text" id="client-name" required placeholder="Ej. Mi Estanco Central" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Latitud (WGS84)</label>
+              <input type="number" id="client-lat" required step="any" min="-90" max="90" placeholder="40.9701" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Longitud (WGS84)</label>
+              <input type="number" id="client-lon" required step="any" min="-180" max="180" placeholder="-5.6635" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+            </div>
+          </div>
+          <button type="submit" class="w-full bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-semibold text-xs py-2.5 rounded-xl transition-all shadow-md shadow-emerald-950/20 flex items-center justify-center gap-1.5">
+            <i data-lucide="plus" class="w-4 h-4"></i> Guardar Posición
+          </button>
+        </form>
+      </div>
+
+      <!-- Añadir Competidor Manualmente -->
+      <div class="glass-card rounded-2xl p-4 space-y-3">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+          <i data-lucide="plus-circle" class="w-4 h-4 text-rose-400"></i> Añadir Competidor (Manual)
+        </h2>
+        <form id="competitor-manual-form" onsubmit="event.preventDefault()" class="space-y-3">
+          <div>
+            <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Nombre Comercial</label>
+            <input type="text" id="competitor-manual-name" required placeholder="Ej. Expendeduría Nº 12" class="w-full bg-zinc-950 border border-zinc-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Latitud (WGS84)</label>
+              <input type="number" id="competitor-manual-lat" required step="any" min="-90" max="90" placeholder="40.9682" class="w-full bg-zinc-950 border border-zinc-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Longitud (WGS84)</label>
+              <input type="number" id="competitor-manual-lon" required step="any" min="-180" max="180" placeholder="-5.6618" class="w-full bg-zinc-950 border border-zinc-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+            </div>
+          </div>
+          <button type="submit" class="w-full bg-gradient-to-r from-rose-700 to-red-600 hover:from-rose-600 hover:to-red-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-all shadow-md shadow-rose-950/20 flex items-center justify-center gap-1.5">
+            <i data-lucide="plus" class="w-4 h-4"></i> Guardar Competidor
+          </button>
+        </form>
+      </div>
+
+      <div class="glass-card rounded-2xl p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <i data-lucide="swords" class="w-4 h-4 text-rose-500"></i> Competidores
+          </h2>
+          <span id="competitors-count" class="text-[10px] bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold px-2 py-0.5 rounded-full">0 añadidos</span>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Listado</h3>
+            <button id="btn-clear-all-competitors" class="hidden text-[10px] text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1">
+              <i data-lucide="trash" class="w-3.5 h-3.5"></i> Borrar todos
+            </button>
+          </div>
+          
+          <div id="competitors-empty" class="text-center py-6 border border-dashed border-zinc-850 rounded-xl bg-zinc-950/20">
+            <i data-lucide="info" class="w-5 h-5 text-zinc-600 mx-auto mb-2"></i>
+            <p class="text-xs text-zinc-500">No hay competidores registrados.</p>
+          </div>
+
+          <div id="competitors-list" class="space-y-2 max-h-56 overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+
+      <!-- Copias de Seguridad -->
+      <div class="glass-card rounded-2xl p-4 space-y-3">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+          <i data-lucide="database" class="w-4 h-4 text-emerald-400"></i> Copias de Seguridad
+        </h2>
+        <p class="text-xs text-zinc-400">Exporta o importa tus estancos guardados en formato JSON.</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="btn-export-json" type="button" class="flex items-center justify-center gap-1.5 py-2 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-600 rounded-xl text-xs font-semibold transition-all">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> Exportar
+          </button>
+          <label class="flex items-center justify-center gap-1.5 py-2 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-600 rounded-xl text-xs font-semibold cursor-pointer transition-all">
+            <i data-lucide="upload" class="w-3.5 h-3.5"></i> Importar
+            <input type="file" id="import-json-file" class="hidden" accept=".json">
+          </label>
+        </div>
+      </div>
+    </div>
+    
+    <div class="p-4 border-t border-zinc-800 bg-zinc-950/90 text-center">
+      <p class="text-[10px] text-zinc-500 font-medium">Desarrollado en base al esferoide terrestre (Haversine)</p>
+    </div>
+  </aside>
+
+  <main class="flex-1 relative w-full min-h-0">
+    <div id="map" class="absolute inset-0 z-10"></div>
+    
+    <div id="capture-banner" class="absolute top-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none flex items-center gap-2 bg-zinc-900/90 border border-emerald-500/30 text-emerald-400 px-4 py-2 rounded-full shadow-lg backdrop-blur-md text-xs font-semibold transition-all duration-300 opacity-100 scale-100">
+      <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+      <span id="capture-banner-text">Capturando posición de: Mi Estanco (Estrella)</span>
+    </div>
+
+    <button id="floating-sidebar-mobile" class="hidden md:hidden absolute bottom-5 left-5 z-20 bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-zinc-800 p-3 rounded-full shadow-2xl transition-all duration-350 transform active:scale-95">
+      <i data-lucide="menu" class="w-6 h-6"></i>
+    </button>
+
+    <div class="absolute bottom-5 right-5 z-20 glass-panel border border-zinc-800 p-3 rounded-xl shadow-2xl text-xs space-y-2 pointer-events-auto max-w-[200px]">
+      <h4 class="font-bold text-white text-[11px] uppercase tracking-wider">Leyenda</h4>
+      <div class="space-y-1.5">
+        <div class="flex items-center gap-2">
+          <div class="w-3.5 h-3.5 rounded-full bg-emerald-500 border border-white flex items-center justify-center shadow-md">
+            <i data-lucide="star" class="w-2.5 h-2.5 text-white fill-white/20"></i>
+          </div>
+          <span class="text-zinc-300 text-[11px]">Mi Estanco (Cliente)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-full bg-rose-500 border border-white shadow-md"></div>
+          <span class="text-zinc-300 text-[11px]">Competidor</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-3.5 h-3.5 bg-emerald-500/35 border border-emerald-500/20 rounded"></div>
+          <span class="text-zinc-300 text-[11px]">Zona de Influencia (Top 3)</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="capture-modal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden transform scale-95 transition-all duration-300">
+      
+      <div id="modal-header-bg" class="p-4 bg-gradient-to-r from-emerald-950/40 to-teal-950/40 border-b border-zinc-800 flex items-center gap-2.5">
+        <div id="modal-header-icon-container" class="p-1.5 rounded-lg">
+          <i id="modal-header-icon" data-lucide="star" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 id="modal-title" class="font-bold text-white text-sm">Registrar Nuevo Estanco</h3>
+          <p class="text-[10px] text-zinc-400">Guardado rápido en base de datos local</p>
+        </div>
+      </div>
+
+      <form id="modal-form" onsubmit="event.preventDefault()" class="p-5 space-y-4">
+        <div class="bg-zinc-950/80 border border-zinc-800/80 p-3 rounded-xl flex items-center justify-between text-xs">
+          <div class="space-y-0.5">
+            <span class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Coordenadas Capturadas</span>
+            <span id="modal-coords-display" class="font-mono text-zinc-300">40.9701, -5.6635</span>
+          </div>
+          <i data-lucide="globe" class="w-4 h-4 text-zinc-600"></i>
+        </div>
+
+        <input type="hidden" id="modal-lat">
+        <input type="hidden" id="modal-lon">
+        <input type="hidden" id="modal-target-type">
+
+        <div>
+          <label class="block text-[11px] font-semibold text-zinc-400 mb-1">Nombre del Estanco</label>
+          <input type="text" id="modal-name" required placeholder="Ej. Expendeduría Nº 15" class="w-full bg-zinc-950 border border-zinc-800 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none transition-all">
+        </div>
+
+        <div class="flex gap-2.5 pt-2">
+          <button type="button" id="btn-close-modal" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs py-2.5 rounded-xl transition-colors border border-zinc-700">Cancelar</button>
+          <button type="submit" id="btn-submit-modal" class="flex-1 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal de error de conexión / Leaflet -->
+  <div id="no-leaflet-warning" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-red-500/30 p-6 rounded-2xl w-full max-w-sm shadow-2xl text-center space-y-4">
+      <div class="p-3.5 bg-red-500/10 border border-red-500/20 rounded-full w-14 h-14 flex items-center justify-center mx-auto text-red-500">
+        <i data-lucide="wifi-off" class="w-6 h-6 animate-pulse"></i>
+      </div>
+      <div>
+        <h3 class="font-bold text-white text-base">Error de Conexión</h3>
+        <p class="text-xs text-zinc-400 mt-1 leading-relaxed">No se han podido descargar las bibliotecas de mapas externas. Comprueba tu conexión a internet y vuelve a intentarlo.</p>
+      </div>
+      <button onclick="window.location.reload()" type="button" class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs py-2.5 rounded-xl border border-zinc-700 transition-colors">
+        Recargar Página
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js?v=13" defer></script>
+</body>
+</html>

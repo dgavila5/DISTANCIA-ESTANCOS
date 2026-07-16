@@ -1,0 +1,11 @@
+{
+  "name": "visualizador-estancos-distancia",
+  "version": "1.0.0",
+  "description": "Visualizador geográfico de zona de influencia de estancos en España según la ley de los 3 más cercanos.",
+  "scripts": {
+    "dev": "npx -y http-server -c-1 -p 3001 -o"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}
