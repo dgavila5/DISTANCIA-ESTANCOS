@@ -327,12 +327,16 @@ function renderClientMarker() {
 
     clientMarker.on('dragend', async (event) => {
       const position = event.target.getLatLng();
-      clientEstanco.lat = position.lat;
-      clientEstanco.lon = position.lng;
-      await db.client.put(clientEstanco);
-      await loadDatabaseCache();
-      const coordEl = document.getElementById('client-saved-coords');
-      if (coordEl) coordEl.textContent = `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`;
+      if (confirm(`¿Estás seguro de que deseas mover "${clientEstanco.name}" a esta nueva posición?`)) {
+        clientEstanco.lat = position.lat;
+        clientEstanco.lon = position.lng;
+        await db.client.put(clientEstanco);
+        await loadDatabaseCache();
+        const coordEl = document.getElementById('client-saved-coords');
+        if (coordEl) coordEl.textContent = `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`;
+      } else {
+        event.target.setLatLng([clientEstanco.lat, clientEstanco.lon]);
+      }
     });
   }
 }
@@ -372,9 +376,13 @@ function renderCompetitorMarkers() {
 
       marker.on('dragend', async (event) => {
         const newPos = event.target.getLatLng();
-        comp.lat = newPos.lat; comp.lon = newPos.lng;
-        await db.competitors.put(comp);
-        await loadDatabaseCache();
+        if (confirm(`¿Estás seguro de que deseas mover "${comp.name}" a esta nueva posición?`)) {
+          comp.lat = newPos.lat; comp.lon = newPos.lng;
+          await db.competitors.put(comp);
+          await loadDatabaseCache();
+        } else {
+          event.target.setLatLng([comp.lat, comp.lon]);
+        }
       });
 
       competitorMarkersMap.set(comp.id, marker);
@@ -834,6 +842,9 @@ function initUIHandlers() {
 
   const importJsonFile = document.getElementById('import-json-file');
   if (importJsonFile) importJsonFile.addEventListener('change', importDataFromJSON);
+
+  const btnRestoreBase = document.getElementById('btn-restore-base');
+  if (btnRestoreBase) btnRestoreBase.addEventListener('click', restoreBaseData);
 }
 
 // Export active data to JSON backup file
@@ -896,4 +907,37 @@ async function importDataFromJSON(event) {
     event.target.value = '';
   };
   reader.readAsText(file);
+}
+
+// Restore base estancos (Salamanca) from backup file
+async function restoreBaseData() {
+  if (confirm("¿Estás seguro de que deseas restaurar los estancos base de Salamanca a su posición original? Esto reemplazará las ubicaciones actuales.")) {
+    try {
+      await db.client.delete('main');
+      await db.competitors.clear();
+      
+      const response = await fetch('ESTANCOS/estancos_backup_2026-07-16.json');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.client) {
+          await db.client.put({ id: 'main', name: data.client.name, lat: data.client.lat, lon: data.client.lon });
+        }
+        if (data.competitors && Array.isArray(data.competitors)) {
+          for (const comp of data.competitors) {
+            await db.competitors.add({ name: comp.name, lat: comp.lat, lon: comp.lon });
+          }
+        }
+        alert("Estancos base restaurados con éxito.");
+        await loadDatabaseCache();
+        if (clientEstanco && map) {
+          map.setView([clientEstanco.lat, clientEstanco.lon], 14);
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      } else {
+        alert("Error: no se pudo cargar el archivo base de Salamanca.");
+      }
+    } catch (error) {
+      alert("Error al restaurar estancos base: " + error.message);
+    }
+  }
 }
