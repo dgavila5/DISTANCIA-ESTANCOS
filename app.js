@@ -69,11 +69,44 @@ let queryMarker = null;
 const DEFAULT_CENTER = [40.9701, -5.6635];
 const DEFAULT_ZOOM = 14;
 
+async function preloadDatabaseIfEmpty() {
+  try {
+    const clientCount = await db.client.get('main');
+    const competitors = await db.competitors.toArray();
+    
+    if (!clientCount && competitors.length === 0) {
+      console.log("Database is empty, preloading from backup...");
+      const response = await fetch('ESTANCOS/estancos_backup_2026-07-16.json');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.client) {
+          await db.client.put(data.client);
+        }
+        if (data.competitors && data.competitors.length > 0) {
+          for (const comp of data.competitors) {
+            await db.competitors.add({
+              name: comp.name,
+              lat: comp.lat,
+              lon: comp.lon
+            });
+          }
+        }
+        console.log("Preloading completed successfully!");
+      } else {
+        console.error("Failed to fetch backup JSON:", response.statusText);
+      }
+    }
+  } catch (e) {
+    console.error("Error during database preloading:", e);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   safeCreateIcons();
   
   // Initialize general UI event handlers and load DB cache first (for offline robustness)
   initUIHandlers();
+  await preloadDatabaseIfEmpty();
   await loadDatabaseCache();
   
   if (typeof L === 'undefined') {
