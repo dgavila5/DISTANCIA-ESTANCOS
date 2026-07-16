@@ -71,6 +71,16 @@ const DEFAULT_ZOOM = 14;
 
 async function preloadDatabaseIfEmpty() {
   try {
+    const APP_VERSION = 'v1.1'; // Incrementing version triggers database update
+    const savedVersion = localStorage.getItem('app_db_version');
+    
+    if (savedVersion !== APP_VERSION) {
+      console.log("New version detected, clearing database and forcing preload...");
+      await db.client.delete('main');
+      await db.competitors.clear();
+      localStorage.setItem('app_db_version', APP_VERSION);
+    }
+    
     const clientCount = await db.client.get('main');
     const competitors = await db.competitors.toArray();
     
