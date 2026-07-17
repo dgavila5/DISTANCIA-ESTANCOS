@@ -65,13 +65,15 @@ let competitorEstancos = [];
 let influenceLayer = null;
 let currentCaptureMode = 'client';
 let queryMarker = null;
+let salamancaBoundary = null;
+let salamancaBBox = null;
 
 const DEFAULT_CENTER = [40.9701, -5.6635];
 const DEFAULT_ZOOM = 14;
 
 async function preloadDatabaseIfEmpty() {
   try {
-    const APP_VERSION = 'v1.1'; // Incrementing version triggers database update
+    const APP_VERSION = 'v1.2'; // Incrementing version triggers database update
     const savedVersion = localStorage.getItem('app_db_version');
     
     if (savedVersion !== APP_VERSION) {
@@ -86,7 +88,7 @@ async function preloadDatabaseIfEmpty() {
     
     if (!clientCount && competitors.length === 0) {
       console.log("Database is empty, preloading from backup...");
-      const response = await fetch('ESTANCOS/estancos_backup_2026-07-16.json');
+      const response = await fetch('ESTANCOS/estancos_backup_2026-07-17.json');
       if (response.ok) {
         const data = await response.json();
         if (data.client) {
@@ -118,6 +120,41 @@ document.addEventListener("DOMContentLoaded", async () => {
   initUIHandlers();
   await preloadDatabaseIfEmpty();
   await loadDatabaseCache();
+
+  // Load Salamanca municipal boundary asynchronously
+  try {
+    const response = await fetch('salamanca_boundary.json');
+    if (response.ok) {
+      salamancaBoundary = await response.json();
+      
+      // Calculate bounding box for fast tile-intersection check
+      let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+      const coords_list = salamancaBoundary.type === "Polygon" 
+        ? [salamancaBoundary.coordinates] 
+        : (salamancaBoundary.coordinates || []);
+        
+      for (const polygon of coords_list) {
+        for (const ring of polygon) {
+          for (const coord of ring) {
+            const lon = coord[0];
+            const lat = coord[1];
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+          }
+        }
+      }
+      if (minLat !== Infinity) {
+        salamancaBBox = { minLat, maxLat, minLon, maxLon };
+      }
+      if (influenceLayer) influenceLayer.redraw();
+    } else {
+      console.warn("Could not load salamanca_boundary.json");
+    }
+  } catch (e) {
+    console.error("Error loading salamanca_boundary.json:", e);
+  }
   
   if (typeof L === 'undefined') {
     // Show user-friendly connection/library failure modal
@@ -175,6 +212,50 @@ function initInfluenceLayer() {
       
       const ctx = tile.getContext('2d');
       if (!clientEstanco || !map) return tile;
+
+      const tileNwPoint = coords.scaleBy(size);
+
+      // 1. Bounding Box check at tile level for performance optimization
+      if (salamancaBBox) {
+        const tileNw = map.unproject(tileNwPoint, coords.z);
+        const tileSe = map.unproject(tileNwPoint.add([size.x, size.y]), coords.z);
+        
+        const tileMinLat = tileSe.lat;
+        const tileMaxLat = tileNw.lat;
+        const tileMinLon = tileNw.lng;
+        const tileMaxLon = tileSe.lng;
+
+        const intersects = !(tileMinLat > salamancaBBox.maxLat ||
+                             tileMaxLat < salamancaBBox.minLat ||
+                             tileMinLon > salamancaBBox.maxLon ||
+                             tileMaxLon < salamancaBBox.minLon);
+        if (!intersects) {
+          // Entirely outside Salamanca municipal boundary, don't draw anything
+          return tile;
+        }
+      }
+
+      // 2. Apply Salamanca Municipal Boundary Clipping Mask
+      if (salamancaBoundary && salamancaBoundary.coordinates) {
+        ctx.beginPath();
+        const coords_list = salamancaBoundary.type === "Polygon" 
+          ? [salamancaBoundary.coordinates] 
+          : (salamancaBoundary.coordinates || []);
+          
+        for (const polygon of coords_list) {
+          const outerRing = polygon[0];
+          if (outerRing && outerRing.length > 0) {
+            const startPt = map.project([outerRing[0][1], outerRing[0][0]], coords.z);
+            ctx.moveTo(startPt.x - tileNwPoint.x, startPt.y - tileNwPoint.y);
+            for (let i = 1; i < outerRing.length; i++) {
+              const pt = map.project([outerRing[i][1], outerRing[i][0]], coords.z);
+              ctx.lineTo(pt.x - tileNwPoint.x, pt.y - tileNwPoint.y);
+            }
+            ctx.closePath();
+          }
+        }
+        ctx.clip();
+      }
       
       ctx.fillStyle = 'rgba(34, 197, 94, 0.18)'; // emerald-500 @ 18%
       
@@ -187,8 +268,6 @@ function initInfluenceLayer() {
         ctx.fillRect(0, 0, size.x, size.y);
         return tile;
       }
-      
-      const tileNwPoint = coords.scaleBy(size);
       
       // Project client to pixel coordinates at this zoom
       const clientPt = map.project([clientEstanco.lat, clientEstanco.lon], coords.z);
@@ -916,7 +995,7 @@ async function restoreBaseData() {
       await db.client.delete('main');
       await db.competitors.clear();
       
-      const response = await fetch('ESTANCOS/estancos_backup_2026-07-16.json');
+      const response = await fetch('ESTANCOS/estancos_backup_2026-07-17.json');
       if (response.ok) {
         const data = await response.json();
         if (data.client) {
