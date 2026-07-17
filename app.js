@@ -65,11 +65,64 @@ let competitorEstancos = [];
 let influenceLayer = null;
 let currentCaptureMode = 'client';
 let queryMarker = null;
-let salamancaBoundary = null;
-let salamancaBBox = null;
+let justDragged = false;
 
 const DEFAULT_CENTER = [40.9701, -5.6635];
 const DEFAULT_ZOOM = 14;
+
+function showCustomConfirm(message) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const msgEl = document.getElementById('confirm-modal-message');
+    const btnCancel = document.getElementById('btn-confirm-cancel');
+    const btnOk = document.getElementById('btn-confirm-ok');
+    
+    if (!modal || !msgEl || !btnCancel || !btnOk) {
+      resolve(confirm(message));
+      return;
+    }
+    
+    msgEl.textContent = message;
+    
+    // Show modal
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    setTimeout(() => {
+      if (modal.firstElementChild) {
+        modal.firstElementChild.classList.remove('scale-95');
+        modal.firstElementChild.classList.add('scale-100');
+      }
+    }, 50);
+    
+    function cleanUp() {
+      // Hide modal
+      if (modal.firstElementChild) {
+        modal.firstElementChild.classList.remove('scale-100');
+        modal.firstElementChild.classList.add('scale-95');
+      }
+      setTimeout(() => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+      }, 150);
+      
+      btnCancel.removeEventListener('click', onCancel);
+      btnOk.removeEventListener('click', onOk);
+    }
+    
+    function onCancel() {
+      cleanUp();
+      resolve(false);
+    }
+    
+    function onOk() {
+      cleanUp();
+      resolve(true);
+    }
+    
+    btnCancel.addEventListener('click', onCancel);
+    btnOk.addEventListener('click', onOk);
+  });
+}
 
 async function preloadDatabaseIfEmpty() {
   try {
@@ -120,41 +173,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   initUIHandlers();
   await preloadDatabaseIfEmpty();
   await loadDatabaseCache();
-
-  // Load Salamanca municipal boundary asynchronously
-  try {
-    const response = await fetch('salamanca_boundary.json');
-    if (response.ok) {
-      salamancaBoundary = await response.json();
-      
-      // Calculate bounding box for fast tile-intersection check
-      let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-      const coords_list = salamancaBoundary.type === "Polygon" 
-        ? [salamancaBoundary.coordinates] 
-        : (salamancaBoundary.coordinates || []);
-        
-      for (const polygon of coords_list) {
-        for (const ring of polygon) {
-          for (const coord of ring) {
-            const lon = coord[0];
-            const lat = coord[1];
-            if (lat < minLat) minLat = lat;
-            if (lat > maxLat) maxLat = lat;
-            if (lon < minLon) minLon = lon;
-            if (lon > maxLon) maxLon = lon;
-          }
-        }
-      }
-      if (minLat !== Infinity) {
-        salamancaBBox = { minLat, maxLat, minLon, maxLon };
-      }
-      if (influenceLayer) influenceLayer.redraw();
-    } else {
-      console.warn("Could not load salamanca_boundary.json");
-    }
-  } catch (e) {
-    console.error("Error loading salamanca_boundary.json:", e);
-  }
   
   if (typeof L === 'undefined') {
     // Show user-friendly connection/library failure modal
@@ -213,50 +231,6 @@ function initInfluenceLayer() {
       const ctx = tile.getContext('2d');
       if (!clientEstanco || !map) return tile;
 
-      const tileNwPoint = coords.scaleBy(size);
-
-      // 1. Bounding Box check at tile level for performance optimization
-      if (salamancaBBox) {
-        const tileNw = map.unproject(tileNwPoint, coords.z);
-        const tileSe = map.unproject(tileNwPoint.add([size.x, size.y]), coords.z);
-        
-        const tileMinLat = tileSe.lat;
-        const tileMaxLat = tileNw.lat;
-        const tileMinLon = tileNw.lng;
-        const tileMaxLon = tileSe.lng;
-
-        const intersects = !(tileMinLat > salamancaBBox.maxLat ||
-                             tileMaxLat < salamancaBBox.minLat ||
-                             tileMinLon > salamancaBBox.maxLon ||
-                             tileMaxLon < salamancaBBox.minLon);
-        if (!intersects) {
-          // Entirely outside Salamanca municipal boundary, don't draw anything
-          return tile;
-        }
-      }
-
-      // 2. Apply Salamanca Municipal Boundary Clipping Mask
-      if (salamancaBoundary && salamancaBoundary.coordinates) {
-        ctx.beginPath();
-        const coords_list = salamancaBoundary.type === "Polygon" 
-          ? [salamancaBoundary.coordinates] 
-          : (salamancaBoundary.coordinates || []);
-          
-        for (const polygon of coords_list) {
-          const outerRing = polygon[0];
-          if (outerRing && outerRing.length > 0) {
-            const startPt = map.project([outerRing[0][1], outerRing[0][0]], coords.z);
-            ctx.moveTo(startPt.x - tileNwPoint.x, startPt.y - tileNwPoint.y);
-            for (let i = 1; i < outerRing.length; i++) {
-              const pt = map.project([outerRing[i][1], outerRing[i][0]], coords.z);
-              ctx.lineTo(pt.x - tileNwPoint.x, pt.y - tileNwPoint.y);
-            }
-            ctx.closePath();
-          }
-        }
-        ctx.clip();
-      }
-      
       ctx.fillStyle = 'rgba(34, 197, 94, 0.18)'; // emerald-500 @ 18%
       
       let resolution = 2;
@@ -268,6 +242,8 @@ function initInfluenceLayer() {
         ctx.fillRect(0, 0, size.x, size.y);
         return tile;
       }
+      
+      const tileNwPoint = coords.scaleBy(size);
       
       // Project client to pixel coordinates at this zoom
       const clientPt = map.project([clientEstanco.lat, clientEstanco.lon], coords.z);
@@ -405,8 +381,11 @@ function renderClientMarker() {
     clientMarker.bindTooltip(clientEstanco.name, { className: 'custom-tooltip', direction: 'top', offset: [0, -12] });
 
     clientMarker.on('dragend', async (event) => {
+      justDragged = true;
+      setTimeout(() => { justDragged = false; }, 200);
       const position = event.target.getLatLng();
-      if (confirm(`¿Estás seguro de que deseas mover "${clientEstanco.name}" a esta nueva posición?`)) {
+      const confirmed = await showCustomConfirm(`¿Estás seguro de que deseas mover "${clientEstanco.name}" a esta nueva posición?`);
+      if (confirmed) {
         clientEstanco.lat = position.lat;
         clientEstanco.lon = position.lng;
         await db.client.put(clientEstanco);
@@ -454,8 +433,11 @@ function renderCompetitorMarkers() {
       marker.bindTooltip(comp.name, { className: 'custom-tooltip', direction: 'top', offset: [0, -8] });
 
       marker.on('dragend', async (event) => {
+        justDragged = true;
+        setTimeout(() => { justDragged = false; }, 200);
         const newPos = event.target.getLatLng();
-        if (confirm(`¿Estás seguro de que deseas mover "${comp.name}" a esta nueva posición?`)) {
+        const confirmed = await showCustomConfirm(`¿Estás seguro de que deseas mover "${comp.name}" a esta nueva posición?`);
+        if (confirmed) {
           comp.lat = newPos.lat; comp.lon = newPos.lng;
           await db.competitors.put(comp);
           await loadDatabaseCache();
@@ -521,6 +503,7 @@ window.zoomToEstanco = function (lat, lon) {
 };
 
 function handleMapClick(e) {
+  if (justDragged) return;
   const lat = e.latlng.lat;
   const lon = e.latlng.lng;
   
@@ -706,14 +689,16 @@ function updateClientUIState(hasClient) {
 }
 
 window.deleteClient = async function() {
-  if (confirm("¿Estás seguro de que deseas eliminar tu estanco?")) {
+  const confirmed = await showCustomConfirm("¿Estás seguro de que deseas eliminar tu estanco?");
+  if (confirmed) {
     await db.client.delete('main');
     await loadDatabaseCache();
   }
 };
 
 window.deleteCompetitor = async function(id) {
-  if (confirm("¿Estás seguro de que deseas eliminar este competidor?")) {
+  const confirmed = await showCustomConfirm("¿Estás seguro de que deseas eliminar este competidor?");
+  if (confirmed) {
     await db.competitors.delete(id);
     await loadDatabaseCache();
   }
@@ -723,7 +708,8 @@ window.makeMainEstanco = async function(id) {
   const competitor = competitorEstancos.find(c => c.id === id);
   if (!competitor) return;
   
-  if (confirm(`¿Deseas establecer "${competitor.name}" como tu estanco principal?`)) {
+  const confirmed = await showCustomConfirm(`¿Deseas establecer "${competitor.name}" como tu estanco principal?`);
+  if (confirmed) {
     const oldMain = clientEstanco;
     
     // Add old main as a competitor if it exists
@@ -868,7 +854,8 @@ function initUIHandlers() {
   
   const clearBtn = document.getElementById('btn-clear-all-competitors');
   if (clearBtn) clearBtn.addEventListener('click', async () => {
-    if (confirm("¿Borrar todos los competidores?")) {
+    const confirmed = await showCustomConfirm("¿Borrar todos los competidores?");
+    if (confirmed) {
       await db.competitors.clear();
       await loadDatabaseCache();
     }
@@ -959,7 +946,8 @@ async function importDataFromJSON(event) {
     try {
       const data = JSON.parse(e.target.result);
       
-      if (confirm("Al importar, se sobrescribirán los datos actuales. ¿Deseas continuar?")) {
+      const confirmed = await showCustomConfirm("Al importar, se sobrescribirán los datos actuales. ¿Deseas continuar?");
+      if (confirmed) {
         await db.client.delete('main');
         await db.competitors.clear();
         
@@ -990,7 +978,8 @@ async function importDataFromJSON(event) {
 
 // Restore base estancos (Salamanca) from backup file
 async function restoreBaseData() {
-  if (confirm("¿Estás seguro de que deseas restaurar los estancos base de Salamanca a su posición original? Esto reemplazará las ubicaciones actuales.")) {
+  const confirmed = await showCustomConfirm("¿Estás seguro de que deseas restaurar los estancos base de Salamanca a su posición original? Esto reemplazará las ubicaciones actuales.");
+  if (confirmed) {
     try {
       await db.client.delete('main');
       await db.competitors.clear();
